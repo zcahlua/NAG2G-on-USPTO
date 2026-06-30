@@ -1,35 +1,49 @@
-[ -z "${MASTER_PORT}" ] && MASTER_PORT=12345
-[ -z "${MASTER_IP}" ] && MASTER_IP=127.0.0.1
-[ -z "${n_gpu}" ] && n_gpu=$(nvidia-smi -L | wc -l)
+[ -z "${MASTER_PORT:-}" ] && MASTER_PORT=12345
+[ -z "${MASTER_IP:-}" ] && MASTER_IP=127.0.0.1
+if [ -z "${n_gpu:-}" ]; then
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    n_gpu=$(nvidia-smi -L | wc -l)
+  else
+    n_gpu=1
+  fi
+fi
 # n_gpu=1
-[ -z "${OMPI_COMM_WORLD_SIZE}" ] && OMPI_COMM_WORLD_SIZE=1
-[ -z "${OMPI_COMM_WORLD_RANK}" ] && OMPI_COMM_WORLD_RANK=0
-# [ -z "${batch_size}" ] && batch_size=1
-batch_size=1
-[ -z "${seed}" ] && seed=1
-[ -z "${len_penalty}" ] && len_penalty=0.0
-[ -z "${beam_size}" ] && beam_size=10
-[ -z "${beam_size_second}" ] && beam_size_second=5
-[ -z "${beam_head_second}" ] && beam_head_second=2
+[ -z "${OMPI_COMM_WORLD_SIZE:-}" ] && OMPI_COMM_WORLD_SIZE=1
+[ -z "${OMPI_COMM_WORLD_RANK:-}" ] && OMPI_COMM_WORLD_RANK=0
+# [ -z "${batch_size:-}" ] && [ -z "${batch_size:-}" ] && batch_size=1
+[ -z "${batch_size:-}" ] && batch_size=1
+[ -z "${seed:-}" ] && seed=1
+[ -z "${len_penalty:-}" ] && len_penalty=0.0
+[ -z "${beam_size:-}" ] && beam_size=10
+[ -z "${beam_size_second:-}" ] && beam_size_second=5
+[ -z "${beam_head_second:-}" ] && beam_head_second=2
 # SimpleGenerator SequenceGeneratorBeamSearch SequenceGeneratorBeamSearch_test
-[ -z "${search_strategies}" ] && search_strategies=SimpleGenerator
-[ -z "${temperature}" ] && temperature=1
-[ -z "${num_workers}" ] && num_workers=5
+[ -z "${search_strategies:-}" ] && search_strategies=SimpleGenerator
+[ -z "${temperature:-}" ] && temperature=1
+[ -z "${num_workers:-}" ] && num_workers=5
 
 path=$1
 results_path=$(echo "$path" | sed 's/\.pt$//')
 config_file=$(dirname "$results_path")/config.ini
 # u50 uf g50 gf
-if echo "${results_path}" | grep -q "unimolplus_uspto_50k"; then
-    [ -z "${model_infer_type}" ] && model_infer_type=u50
-else
-    echo "Unsupported infer name: $results_path"
+if [ -n "${2:-}" ]; then
     model_infer_type=$2
+elif echo "${results_path}" | grep -qi "unimolplus_uspto_50k"; then
+    [ -z "${model_infer_type:-}" ] && model_infer_type=u50
+elif echo "${results_path}" | grep -Eqi "uspto_mit|480k"; then
+    [ -z "${model_infer_type:-}" ] && model_infer_type=umit
+else
+    echo "Unsupported infer name: $results_path; pass infer type explicitly (u50 or umit)." >&2
+    exit 1
 fi
 export NCCL_ASYNC_ERROR_HANDLING=1
 export OMP_NUM_THREADS=1
 time=$(date "+%Y%m%d-%H%M%S")
-gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader | sed 's/ //g')
+if command -v nvidia-smi >/dev/null 2>&1; then
+  gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader | sed 's/ //g')
+else
+  gpu="CPU"
+fi
 unimol_version=$(pip show unimol | grep Version | awk '{print $2}')
 
 echo -e "\n\n"
@@ -48,24 +62,31 @@ echo "gpu" $gpu
 echo "unimol_version" $unimol_version
 
 if echo "${gpu}" | grep -q "V100"; then
-    [ -z "${num_workers}" ] && num_workers=5
+    [ -z "${num_workers:-}" ] && num_workers=5
 elif echo "${gpu}" | grep -q "A100"; then
-    [ -z "${num_workers}" ] && num_workers=12
+    [ -z "${num_workers:-}" ] && num_workers=12
 else
-    echo "Unsupported GPU: $gpu"
-    [ -z "${num_workers}" ] && num_workers=12
+    echo "Using default worker count for GPU/accelerator: $gpu"
+    [ -z "${num_workers:-}" ] && num_workers=12
 fi
 echo "num_workers" ${num_workers}
  
 case $model_infer_type in
   u50)
-    [ -z "${data_path}" ] && data_path='USPTO50K_brief_20230227'
+    [ -z "${data_path:-}" ] && data_path='USPTO50K_brief_20230227'
     task=G2G_unimolv2
     encoder_type=unimolv2
     echo "u50"
     ;;
+  umit)
+    [ -z "${data_path:-}" ] && data_path='USPTO_MIT_480K_NAG2G'
+    task=G2G_unimolv2
+    encoder_type=unimolv2
+    echo "umit"
+    ;;
   *)
-    echo "未知取值"
+    echo "Unsupported model_infer_type: $model_infer_type" >&2
+    exit 1
     ;;
 esac
 

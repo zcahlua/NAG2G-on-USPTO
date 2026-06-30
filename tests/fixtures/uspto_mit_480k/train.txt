@@ -1,0 +1,3 @@
+[CH3:1][OH:2]>>[CH3:1][Cl:2] 1-2
+malformed_without_separator center
+  [CH3:1][Br:2]>>[CH3:1][OH:2]    2-3 extra
